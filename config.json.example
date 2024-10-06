@@ -1,0 +1,30 @@
+{
+  "tapo": {
+    "username": "mail@gmail.com",
+    "password": "pass"
+  },
+  "devices": [
+    {
+      "name": "Tapo P115 #1",
+      "ip": "192.168.1.2"
+    },
+    {
+      "name": "Tapo P115 #2",
+      "ip": "192.168.1.3"
+    },
+    {
+      "name": "Tapo P115 #3",
+      "ip": "192.168.1.4"
+    },
+    {
+      "name": "Tapo P115 #4",
+      "ip": "192.168.1.5"
+    }
+  ],
+  "max_limit_watt": 800,
+  "ecoflow": {
+    "api_key": "key",
+    "secret_key": "pass",
+    "serial_number": "sn"
+  }
+}
