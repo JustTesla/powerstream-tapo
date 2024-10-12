@@ -1,5 +1,6 @@
 import json
 import asyncio
+import aiohttp
 import requests
 import hashlib
 import hmac
@@ -8,18 +9,18 @@ import time
 import binascii
 from tapo import ApiClient
 
-# Функция для загрузки конфигурации
+# Function to load configuration
 def load_config(filename="config.json"):
     with open(filename, "r") as f:
         return json.load(f)
 
-# HMAC-SHA256 подпись
+# HMAC-SHA256 signature
 def hmac_sha256(data, key):
     hashed = hmac.new(key.encode('utf-8'), data.encode('utf-8'), hashlib.sha256).digest()
     sign = binascii.hexlify(hashed).decode('utf-8')
     return sign
 
-# Вспомогательные функции для работы с параметрами
+# Helper functions for working with parameters
 def get_map(json_obj, prefix=""):
     def flatten(obj, pre=""):
         result = {}
@@ -37,7 +38,7 @@ def get_map(json_obj, prefix=""):
 def get_qstr(params):
     return '&'.join([f"{key}={params[key]}" for key in sorted(params.keys())])
 
-# Запросы к API
+# API requests
 def get_api(url, key, secret, params=None):
     nonce = str(random.randint(100000, 999999))
     timestamp = str(int(time.time() * 1000))
@@ -77,37 +78,43 @@ def put_api(url, key, secret, params=None):
         print(f"put_api: {response.text}")
         return None
 
-# Проверка, находится ли устройство онлайн
+# Check if the device is online
 def check_if_device_is_online(SN, payload):
     for device in payload.get('data', []):
         if device.get('sn') == SN:
             return device.get('online', 0) == 1
     return False
 
-# Функция для подключения и получения данных с устройства
-async def get_power_usage(client, device_ip):
+# Function to connect and retrieve data from the device with timeout
+async def get_power_usage(client, device_ip, timeout=5):
     try:
-        device = await client.p110(device_ip)  # Подключение к устройству
-        energy_usage = await device.get_energy_usage()  # Получение энергопотребления
-        current_power = energy_usage.current_power / 1000  # Преобразуем в киловатты
+        # Use asyncio.wait_for to enforce a timeout on the device connection and data retrieval
+        device = await asyncio.wait_for(client.p110(device_ip), timeout=timeout)  # Connect to the device
+        energy_usage = await asyncio.wait_for(device.get_energy_usage(), timeout=timeout)  # Fetch energy usage
+        current_power = energy_usage.current_power / 1000  # Convert to kilowatts
         return current_power
+    except asyncio.TimeoutError:
+        print(f"Error: Timeout exceeded for device {device_ip}")
+        return 0
     except Exception as e:
-        print(f"Ошибка получения данных с устройства {device_ip}: {e}")
+        print(f"Error getting data from device {device_ip}: {e}")
         return 0
 
-# Функция для отправки данных на EcoFlow PowerStream
+# Function to send data to EcoFlow PowerStream
 def send_to_ecoflow(key, secret, serial_number, total_power, last_power):
-    print(f"send_to_ecoflow: Запрашиваем мощность {total_power} для устройства {serial_number}.")
+    config = load_config()
 
-    # Проверяем статус устройства
+    print(f"send_to_ecoflow: Requesting power {total_power} for device {serial_number}.")
+
+    # Check the device status
     url_device = "https://api.ecoflow.com/iot-open/sign/device/list"
     payload = get_api(url_device, key, secret, {"sn": serial_number})
 
     if not check_if_device_is_online(serial_number, payload):
-        print(f"Устройство {serial_number} оффлайн. Операция отменена.")
-        return last_power  # Возвращаем старое значение
+        print(f"Device {serial_number} is offline. Operation canceled.")
+        return last_power  # Return the old value
 
-    # Получаем текущую мощность
+    # Get current power
     url_quota = "https://api.ecoflow.com/iot-open/sign/device/quota"
     quotas = ["20_1.permanentWatts"]
     params = {"sn": serial_number, "params": {"quotas": quotas}}
@@ -115,56 +122,56 @@ def send_to_ecoflow(key, secret, serial_number, total_power, last_power):
 
     if quota_response:
         cur_permanent_watts = round(quota_response["data"]["20_1.permanentWatts"] / 10)
-        print(f"Текущая мощность на сервере EcoFlow: {cur_permanent_watts} Вт.")
+        print(f"Current power on the EcoFlow server: {cur_permanent_watts} W.")
 
-        # Ограничиваем значение 0-800 Вт
+        # Limit the value to 0-800 W
         new_permanent_watts = total_power
 
-        if new_permanent_watts > max_limit_watt:
-            new_permanent_watts = max_limit_watt
+        if new_permanent_watts > config["max_limit_watt"]:
+            new_permanent_watts = config["max_limit_watt"]
         elif new_permanent_watts < 0:
             new_permanent_watts = 0
 
-        # Отправляем только если новое значение отличается от старого
+        # Send only if the new value is different from the old one
         if new_permanent_watts != cur_permanent_watts:
-            # Устанавливаем новое значение мощности
+            # Set the new power value
             url_set = "https://api.ecoflow.com/iot-open/sign/device/quota"
             cmd_code = "WN511_SET_PERMANENT_WATTS_PACK"
             params = {"sn": serial_number, "cmdCode": cmd_code, "params": {"permanentWatts": new_permanent_watts * 10}}
             response = put_api(url_set, key, secret, params)
 
             if response:
-                print(f"Успешно установлено новое значение: {new_permanent_watts} Вт.")
-                return new_permanent_watts  # Обновляем last_power
+                print(f"Successfully set new value: {new_permanent_watts} W.")
+                return new_permanent_watts  # Update last_power
             else:
-                print(f"Ошибка при установке нового значения мощности.")
+                print(f"Error setting the new power value.")
         else:
-            print("Новое значение мощности не изменилось, отправка не требуется.")
+            print("New power value has not changed, sending is not required.")
 
-    return last_power  # Возвращаем старое значение
+    return last_power  # Return the old value
 
-# Функция мониторинга устройств
+# Device monitoring function
 async def monitor_devices(devices, username, password, max_limit_watt, ecoflow_config):
-    client = ApiClient(username, password)  # Создание клиента Tapo API
-    last_power = 0  # Инициализация переменной для хранения последней установленной мощности
+    client = ApiClient(username, password)  # Create Tapo API client
+    last_power = 0  # Initialize variable to store the last set power
 
     while True:
         total_power = 0
         for device_info in devices:
-            power_usage = await get_power_usage(client, device_info["ip"])
-            print(f"Устройство {device_info['name']} потребляет {power_usage} Вт.")
+            power_usage = await get_power_usage(client, device_info["ip"], timeout=5)  # Set 5-second timeout
+            print(f"Device {device_info['name']} is consuming {power_usage} W.")
             total_power += power_usage
 
-        # Ограничиваем мощность до max_limit_watt
+        # Limit the power to max_limit_watt
         if total_power > max_limit_watt:
             total_power = max_limit_watt
 
-        # Отправляем данные на EcoFlow PowerStream
+        # Send data to EcoFlow PowerStream
         last_power = send_to_ecoflow(ecoflow_config["api_key"], ecoflow_config["secret_key"], ecoflow_config["serial_number"], total_power, last_power)
 
-        await asyncio.sleep(10)  # Пауза между запросами (можно настроить)
+        await asyncio.sleep(10)  # Pause between requests (can be adjusted)
 
-# Основная логика
+# Main logic
 async def main():
     config = load_config()
 
@@ -174,7 +181,7 @@ async def main():
     max_limit_watt = config["max_limit_watt"]
     ecoflow_config = config["ecoflow"]
 
-    print("Запуск мониторинга устройств Tapo P115...")
+    print("Starting monitoring of Tapo P115 devices...")
     await monitor_devices(devices, username, password, max_limit_watt, ecoflow_config)
 
 if __name__ == "__main__":
