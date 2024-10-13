@@ -1,13 +1,12 @@
 import json
 import asyncio
-import aiohttp
 import requests
 import hashlib
 import hmac
 import random
 import time
 import binascii
-from tapo import ApiClient
+from PyP100 import PyP110  # Importing the library for working with smart plugs
 
 # Function to load configuration
 def load_config(filename="config.json"):
@@ -88,14 +87,14 @@ def check_if_device_is_online(SN, payload):
 # Function to connect and retrieve data from the device with timeout
 async def get_power_usage(client, device_ip, timeout=5):
     try:
-        # Use asyncio.wait_for to enforce a timeout on the device connection and data retrieval
-        device = await asyncio.wait_for(client.p110(device_ip), timeout=timeout)  # Connect to the device
-        energy_usage = await asyncio.wait_for(device.get_energy_usage(), timeout=timeout)  # Fetch energy usage
-        current_power = energy_usage.current_power / 1000  # Convert to kilowatts
+        # Establishing connection (handshake and login)
+        client.handshake()  # Setting necessary cookies
+        client.login()  # Logging into the device
+
+        # Getting energy consumption data
+        energy_usage = client.getEnergyUsage()
+        current_power = energy_usage['current_power'] / 1000  # Converting to kilowatts
         return current_power
-    except asyncio.TimeoutError:
-        print(f"Error: Timeout exceeded for device {device_ip}")
-        return 0
     except Exception as e:
         print(f"Error getting data from device {device_ip}: {e}")
         return 0
@@ -151,38 +150,53 @@ def send_to_ecoflow(key, secret, serial_number, total_power, last_power):
     return last_power  # Return the old value
 
 # Device monitoring function
-async def monitor_devices(devices, username, password, max_limit_watt, ecoflow_config):
-    client = ApiClient(username, password)  # Create Tapo API client
-    last_power = 0  # Initialize variable to store the last set power
+async def monitor_devices(devices, email, password, max_limit_watt, base_load_watt, ecoflow_config):
+    last_power = 0  # Initialize variable for storing the last set power
 
     while True:
-        total_power = 0
+        total_power = base_load_watt  # Initialize total power with base load
         for device_info in devices:
-            power_usage = await get_power_usage(client, device_info["ip"], timeout=5)  # Set 5-second timeout
-            print(f"Device {device_info['name']} is consuming {power_usage} W.")
-            total_power += power_usage
+            device_ip = device_info["ip"]
 
-        # Limit the power to max_limit_watt
+            # Create client for the P110 device
+            client = PyP110.P110(device_ip, email, password)
+
+            try:
+                # Get current energy consumption
+                power_usage = await get_power_usage(client, device_ip, timeout=5)
+                print(f"Device {device_info['name']} is consuming {power_usage} W.")
+                total_power += power_usage
+
+            except Exception as e:
+                print(f"Error getting data from device {device_ip}: {e}")
+                total_power += 0  # In case of error, assume the device consumes 0 watts
+
+        # Power limit
         if total_power > max_limit_watt:
             total_power = max_limit_watt
 
-        # Send data to EcoFlow PowerStream
-        last_power = send_to_ecoflow(ecoflow_config["api_key"], ecoflow_config["secret_key"], ecoflow_config["serial_number"], total_power, last_power)
+        # Sending data to EcoFlow PowerStream
+        last_power = send_to_ecoflow(
+            ecoflow_config["api_key"], ecoflow_config["secret_key"],
+            ecoflow_config["serial_number"], total_power, last_power
+        )
 
-        await asyncio.sleep(10)  # Pause between requests (can be adjusted)
+        await asyncio.sleep(10)  # Wait between requests
+
 
 # Main logic
 async def main():
     config = load_config()
 
-    username = config["tapo"]["username"]
+    email = config["tapo"]["username"]
     password = config["tapo"]["password"]
     devices = config["devices"]
     max_limit_watt = config["max_limit_watt"]
+    base_load_watt = config["base_load_watt"]  # Adding base load from the config
     ecoflow_config = config["ecoflow"]
 
     print("Starting monitoring of Tapo P115 devices...")
-    await monitor_devices(devices, username, password, max_limit_watt, ecoflow_config)
+    await monitor_devices(devices, email, password, max_limit_watt, base_load_watt, ecoflow_config)
 
 if __name__ == "__main__":
     asyncio.run(main())
