@@ -21,6 +21,5 @@ This service monitors Tapo P115 smart plugs and sends real-time energy consumpti
 - **Tapo P115 Smart Plugs**: The service requires access to your Tapo P115 devices.
 - **EcoFlow PowerStream System**: The service communicates with an EcoFlow PowerStream setup.
 - **API Access**: You will need access to both Tapo's local API for monitoring and EcoFlow's API for controlling the PowerStream load.
-- **Remove old library**: pip remove pyp100
-- **Install another libeary**: pip install git+https://github.com/almottier/TapoP100.git@main
-
+- **Change library**: pip remove pyp100 && 
+pip install git+https://github.com/almottier/TapoP100.git@main
