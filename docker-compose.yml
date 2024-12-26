@@ -1,0 +1,9 @@
+version: '3.8'
+services:
+  tapo-monitor:
+    build: .
+    container_name: tapo_monitor
+    volumes:
+      - ./config.json:/app/config.json
+    restart: always
+

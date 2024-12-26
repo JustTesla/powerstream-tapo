@@ -1,0 +1,43 @@
+# Исключаем файлы/папки Python
+blogger/
+README.md
+make_url.py
+.env
+config.json
+credentials.json
+
+
+# Ignore .jpg .csv
+*.csv
+*.jpg
+
+# Исключаем файлы конфигурации и секретные данные, если они не должны быть в образе
+*.env
+.env.*
+
+# Исключаем файлы тестов
+tests/
+*.pytest_cache/
+
+# Исключаем лог-файлы
+*.log
+
+# Исключаем зависимости (если они не нужны в образе)
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Исключаем системные файлы и папки
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# Исключаем файлы и папки Git
+.git
+.gitignore
+
+# Исключаем временные файлы и артефакты сборки
+*.tmp
+*.bak
+*.old
+*.orig

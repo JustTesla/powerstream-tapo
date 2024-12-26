@@ -7,7 +7,22 @@ import hmac
 import random
 import time
 import binascii
+import logging
+from logging.handlers import TimedRotatingFileHandler
+from datetime import datetime, timedelta
 from tapo import ApiClient
+
+# Configure logging
+handler = TimedRotatingFileHandler("monitor.log", when="H", interval=1, backupCount=1)  # Логи за последний час
+formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+handler.setFormatter(formatter)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[handler, logging.StreamHandler()]
+)
+logger = logging.getLogger(__name__)
 
 # Function to load configuration
 def load_config(filename="config.json"):
@@ -49,7 +64,7 @@ def get_api(url, key, secret, params=None):
     if response.status_code == 200:
         return response.json()
     else:
-        print(f"get_api: {response.text}")
+        logger.error(f"get_api: {response.text}")
         return None
 
 def post_api(url, key, secret, params=None):
@@ -62,7 +77,7 @@ def post_api(url, key, secret, params=None):
     if response.status_code == 200:
         return response.json()
     else:
-        print(f"post_api: {response.text}")
+        logger.error(f"post_api: {response.text}")
         return None
 
 def put_api(url, key, secret, params=None):
@@ -75,10 +90,28 @@ def put_api(url, key, secret, params=None):
     if response.status_code == 200:
         return response.json()
     else:
-        print(f"put_api: {response.text}")
+        logger.error(f"put_api: {response.text}")
         return None
 
-# Check if the device is online
+# Utility to check if time is within the restricted period
+def is_night_time():
+    now = datetime.now()
+    if now.hour >= 18 or now.hour < 7:
+        return True
+    return False
+
+# Wait until 7:00 the next day
+async def wait_until_morning():
+    now = datetime.now()
+    if now.hour >= 18:
+        next_morning = now.replace(hour=7, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    else:
+        next_morning = now.replace(hour=7, minute=0, second=0, microsecond=0)
+    sleep_time = (next_morning - now).total_seconds()
+    logger.info(f"PowerStream offline after 18:00. Sleeping until 7:00 ({sleep_time / 3600:.1f} hours).")
+    await asyncio.sleep(sleep_time)
+
+# Function to check if the device is online
 def check_if_device_is_online(SN, payload):
     for device in payload.get('data', []):
         if device.get('sn') == SN:
@@ -88,31 +121,32 @@ def check_if_device_is_online(SN, payload):
 # Function to connect and retrieve data from the device with timeout
 async def get_power_usage(client, device_ip, timeout=5):
     try:
-        # Use asyncio.wait_for to enforce a timeout on the device connection and data retrieval
-        device = await asyncio.wait_for(client.p110(device_ip), timeout=timeout)  # Connect to the device
-        energy_usage = await asyncio.wait_for(device.get_energy_usage(), timeout=timeout)  # Fetch energy usage
-        current_power = energy_usage.current_power / 1000  # Convert to kilowatts
+        device = await asyncio.wait_for(client.p110(device_ip), timeout=timeout)
+        energy_usage = await asyncio.wait_for(device.get_energy_usage(), timeout=timeout)
+        current_power = energy_usage.current_power / 1000
         return current_power
     except asyncio.TimeoutError:
-        print(f"Error: Timeout exceeded for device {device_ip}")
+        logger.error(f"Error: Timeout exceeded for device {device_ip}")
         return 0
     except Exception as e:
-        print(f"Error getting data from device {device_ip}: {e}")
+        logger.error(f"Error getting data from device {device_ip}: {e}")
         return 0
 
 # Function to send data to EcoFlow PowerStream
 def send_to_ecoflow(key, secret, serial_number, total_power, last_power):
     config = load_config()
 
-    print(f"send_to_ecoflow: Requesting power {total_power} for device {serial_number}.")
+    logger.info(f"send_to_ecoflow: Requesting power {total_power} for device {serial_number}.")
 
     # Check the device status
     url_device = "https://api.ecoflow.com/iot-open/sign/device/list"
     payload = get_api(url_device, key, secret, {"sn": serial_number})
 
     if not check_if_device_is_online(serial_number, payload):
-        print(f"Device {serial_number} is offline. Operation canceled.")
-        return last_power  # Return the old value
+        logger.warning(f"Device {serial_number} is offline.")
+        if is_night_time():
+            asyncio.run(wait_until_morning())
+        return last_power
 
     # Get current power
     url_quota = "https://api.ecoflow.com/iot-open/sign/device/quota"
@@ -122,7 +156,7 @@ def send_to_ecoflow(key, secret, serial_number, total_power, last_power):
 
     if quota_response:
         cur_permanent_watts = round(quota_response["data"]["20_1.permanentWatts"] / 10)
-        print(f"Current power on the EcoFlow server: {cur_permanent_watts} W.")
+        logger.info(f"Current power on the EcoFlow server: {cur_permanent_watts} W.")
 
         # Limit the value to 0-800 W
         new_permanent_watts = total_power
@@ -132,44 +166,40 @@ def send_to_ecoflow(key, secret, serial_number, total_power, last_power):
         elif new_permanent_watts < 0:
             new_permanent_watts = 0
 
-        # Send only if the new value is different from the old one
         if new_permanent_watts != cur_permanent_watts:
-            # Set the new power value
             url_set = "https://api.ecoflow.com/iot-open/sign/device/quota"
             cmd_code = "WN511_SET_PERMANENT_WATTS_PACK"
             params = {"sn": serial_number, "cmdCode": cmd_code, "params": {"permanentWatts": new_permanent_watts * 10}}
             response = put_api(url_set, key, secret, params)
 
             if response:
-                print(f"Successfully set new value: {new_permanent_watts} W.")
-                return new_permanent_watts  # Update last_power
+                logger.info(f"Successfully set new value: {new_permanent_watts} W.")
+                return new_permanent_watts
             else:
-                print(f"Error setting the new power value.")
+                logger.error(f"Error setting the new power value.")
         else:
-            print("New power value has not changed, sending is not required.")
+            logger.info("New power value has not changed, sending is not required.")
 
-    return last_power  # Return the old value
+    return last_power
 
 # Device monitoring function
-async def monitor_devices(devices, username, password, max_limit_watt, ecoflow_config):
-    client = ApiClient(username, password)  # Create Tapo API client
-    last_power = 0  # Initialize variable to store the last set power
+async def monitor_devices(devices, username, password, max_limit_watt, base_consumption, ecoflow_config):
+    client = ApiClient(username, password)
+    last_power = 0
 
     while True:
-        total_power = 0
+        total_power = base_consumption
         for device_info in devices:
-            power_usage = await get_power_usage(client, device_info["ip"], timeout=5)  # Set 5-second timeout
-            print(f"Device {device_info['name']} is consuming {power_usage} W.")
+            power_usage = await get_power_usage(client, device_info["ip"], timeout=5)
+            logger.info(f"Device {device_info['name']} is consuming {power_usage} W.")
             total_power += power_usage
 
-        # Limit the power to max_limit_watt
         if total_power > max_limit_watt:
             total_power = max_limit_watt
 
-        # Send data to EcoFlow PowerStream
         last_power = send_to_ecoflow(ecoflow_config["api_key"], ecoflow_config["secret_key"], ecoflow_config["serial_number"], total_power, last_power)
 
-        await asyncio.sleep(10)  # Pause between requests (can be adjusted)
+        await asyncio.sleep(10)
 
 # Main logic
 async def main():
@@ -179,10 +209,11 @@ async def main():
     password = config["tapo"]["password"]
     devices = config["devices"]
     max_limit_watt = config["max_limit_watt"]
+    base_consumption = config["base_consumption"]
     ecoflow_config = config["ecoflow"]
 
-    print("Starting monitoring of Tapo P115 devices...")
-    await monitor_devices(devices, username, password, max_limit_watt, ecoflow_config)
+    logger.info("Starting monitoring of Tapo P115 devices...")
+    await monitor_devices(devices, username, password, max_limit_watt, base_consumption, ecoflow_config)
 
 if __name__ == "__main__":
     asyncio.run(main())

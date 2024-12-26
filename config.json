@@ -1,7 +1,7 @@
 {
   "tapo": {
-    "username": "name@mail.com",
-    "password": ""
+    "username": "b.hubrii@gmail.com",
+    "password": "qqallcs16"
   },
   "devices": [
     {
@@ -24,8 +24,8 @@
   "max_limit_watt": 800,
   "base_consumption": 10,
   "ecoflow": {
-    "api_key": "",
-    "secret_key": "",
-    "serial_number": ""
+    "api_key": "H5vnUrm4jdxK5gg8fWPf7QZriHF3yuP4",
+    "secret_key": "m2YxKKgEDk02tA2zM0HdtAwnFywV61Ik",
+    "serial_number": "HW51ZEH4SF5X8328"
   }
 }
