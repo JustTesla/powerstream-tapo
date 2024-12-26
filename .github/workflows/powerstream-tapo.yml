@@ -1,4 +1,4 @@
-name: powerstream-tapo
+name: powerstreamtapo
 
 on:
   push:
@@ -31,14 +31,14 @@ jobs:
       # Шаг 3: Сборка Docker-образа
       - name: Build Docker image
         run: |
-          docker build . --tag ghcr.io/${{ env.REPO_NAME }}-powerstream-tapo:latest
+          docker build . --tag ghcr.io/${{ env.REPO_NAME }}-powerstreamtapo:latest
 
       # Шаг 4: Тестирование Docker-образа
       - name: Test Docker image
         run: |
-          docker run -d --rm ghcr.io/${{ env.REPO_NAME }}-powerstream-tapo:latest python -c "print('Container built successfully')"
+          docker run -d --rm ghcr.io/${{ env.REPO_NAME }}-powerstreamtapo:latest python -c "print('Container built successfully')"
 
       # Шаг 5: Публикация Docker-образа
       - name: Push Docker image
         run: |
-          docker push ghcr.io/${{ env.REPO_NAME }}-powerstream-tapo:latest
+          docker push ghcr.io/${{ env.REPO_NAME }}-powerstreamtapo:latest
