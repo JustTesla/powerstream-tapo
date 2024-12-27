@@ -133,6 +133,7 @@ async def get_power_usage(client, device_ip, timeout=5):
         return 0
 
 # Function to send data to EcoFlow PowerStream
+# Function to send data to EcoFlow PowerStream
 def send_to_ecoflow(key, secret, serial_number, total_power, last_power):
     config = load_config()
 
@@ -145,7 +146,8 @@ def send_to_ecoflow(key, secret, serial_number, total_power, last_power):
     if not check_if_device_is_online(serial_number, payload):
         logger.warning(f"Device {serial_number} is offline.")
         if is_night_time():
-            asyncio.run(wait_until_morning())
+            # Заменяем asyncio.run на await
+            return asyncio.create_task(wait_until_morning())
         return last_power
 
     # Get current power
@@ -182,12 +184,19 @@ def send_to_ecoflow(key, secret, serial_number, total_power, last_power):
 
     return last_power
 
+
 # Device monitoring function
 async def monitor_devices(devices, username, password, max_limit_watt, base_consumption, ecoflow_config):
     client = ApiClient(username, password)
     last_power = 0
 
     while True:
+        # Проверка на ночное время
+        if is_night_time():
+            logger.info("It's night time. Waiting until morning.")
+            await wait_until_morning()
+            continue
+
         total_power = base_consumption
         for device_info in devices:
             power_usage = await get_power_usage(client, device_info["ip"], timeout=5)
@@ -199,7 +208,9 @@ async def monitor_devices(devices, username, password, max_limit_watt, base_cons
 
         last_power = send_to_ecoflow(ecoflow_config["api_key"], ecoflow_config["secret_key"], ecoflow_config["serial_number"], total_power, last_power)
 
+        # Задержка перед следующей итерацией
         await asyncio.sleep(10)
+
 
 # Main logic
 async def main():
