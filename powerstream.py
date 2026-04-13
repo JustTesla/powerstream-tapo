@@ -122,8 +122,8 @@ def check_if_device_is_online(SN, payload):
 async def get_power_usage(client, device_ip, timeout=5):
     try:
         device = await asyncio.wait_for(client.p110(device_ip), timeout=timeout)
-        energy_usage = await asyncio.wait_for(device.get_energy_usage(), timeout=timeout)
-        current_power = energy_usage.current_power / 1000
+        current_power_result = await asyncio.wait_for(device.get_current_power(), timeout=timeout)
+        current_power = current_power_result.current_power
         return current_power
     except asyncio.TimeoutError:
         logger.error(f"Error: Timeout exceeded for device {device_ip}")
